@@ -1,8 +1,8 @@
 {
-  "name": "dsh-edge",
-  "version": "0.10.0",
-  "description": "Your DeepSeek Harness, anywhere — deploy a persistent personal coding agent to Cloudflare Workers in one command",
-  "author": "pawaca",
+  "name": "@open-compute/dsh-edge",
+  "version": "0.12.4",
+  "description": "DeepSeek Harness on Cloudflare Workers — CLI installer and embeddable Edge runtime for open-compute hosts",
+  "author": "open-compute",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -11,22 +11,31 @@
   "files": [
     "dist",
     "worker",
-    "scripts/*.d.mts",
-    "scripts/*.mjs",
+    "src",
+    "scripts",
+    "edge-client",
+    "vendor",
+    "standalone/scripts",
+    "standalone/patches",
+    "standalone/package.json",
+    "standalone/pnpm-lock.yaml",
+    "standalone/pnpm-workspace.yaml",
+    "standalone/tsdown.edge-client.config.mjs",
     "wrangler.jsonc",
     "README.md",
     "README.zh.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "types"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pawaca/dsh-edge.git",
+    "url": "git+https://github.com/elliothux/dsh-edge.git",
     "directory": "apps/dsh-edge"
   },
-  "homepage": "https://github.com/pawaca/dsh-edge#readme",
+  "homepage": "https://github.com/elliothux/dsh-edge#readme",
   "bugs": {
-    "url": "https://github.com/pawaca/dsh-edge/issues"
+    "url": "https://github.com/elliothux/dsh-edge/issues"
   },
   "keywords": [
     "deepseek",
@@ -57,7 +66,7 @@
     "install:cloudflare": "pnpm run bundle:workers && node scripts/cli.mjs install",
     "legal:write": "node scripts/legal-files.mjs write",
     "pack:verify": "node scripts/verify-packed.mjs",
-    "prepack": "node scripts/legal-files.mjs verify && pnpm run bundle:workers",
+    "prepack": "node scripts/legal-files.mjs verify && pnpm run bundle:workers && node scripts/stage-edge-client.mjs && node scripts/stage-vendor.mjs",
     "web:build": "pnpm --dir standalone run build:web && node standalone/scripts/promote.mjs web",
     "test": "vitest run --root ../.. --project edge-runtime",
     "test:integration": "pnpm run bundle:workers && node tests/run-session-integration.mjs",
@@ -65,17 +74,89 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@clack/prompts": "1.7.0",
+    "@cloudflare/computer": "0.2.1",
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-agent": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-agent-loop": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-anonymous-user-id": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-api-gateway": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-api-session-controller": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-api-settings-controller": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-api-workspace-controller": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-attachment": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-base": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-brand": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-modules": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-store": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings-models": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-commands": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-compaction": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-compaction-basic": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-credentials": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-deque": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-fs": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-goal": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-goal-round-driver": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-invariants": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-launch-environment": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-llm-deepseek": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-message-feedback": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-output-retention": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-sandbox": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-session": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-session-persistence": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-session-projection": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-session-projection-cache": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-session-query": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-session-title": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-session-title-first-prompt-llm": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-session-title-llm": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-settings": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-skill": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-spill": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-spill-policy": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-storage": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-storage-domain": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-timeout": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-token-meter": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-tool-call-timeout-policy": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-tool-fs": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-tool-goal": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-tool-skill": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-tool-subagent": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-tool-web": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-typert-registry": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-util-crypto": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-util-values": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-web": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-web-app": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-web-fetch-http": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-web-frontend": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-web-search-deepseek": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-workspace": "0.1.2-rc.1",
+    "@mixmark-io/domino": "2.2.0",
     "compare-versions": "6.1.1",
     "execa": "^10.0.1",
+    "fast-png": "8.0.0",
+    "jpeg-js": "0.4.4",
     "jsonc-parser": "^3.3.1",
-    "wrangler": "4.129.0"
+    "just-bash": "3.4.2",
+    "wrangler": "4.129.0",
+    "@clack/prompts": "1.7.0"
   },
   "devDependencies": {
     "@cloudflare/computer": "0.2.1",
     "@cloudflare/workers-types": "5.20260904.1",
     "@deepseek-ai/cordis": "4.0.2",
     "@deepseek-ai/dsh-agent": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.2-rc.1",
     "@deepseek-ai/dsh-agent-loop": "0.1.2-rc.1",
     "@deepseek-ai/dsh-anonymous-user-id": "0.1.2-rc.1",
     "@deepseek-ai/dsh-api-gateway": "0.1.2-rc.1",
@@ -137,5 +218,37 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.8",
     "ws": "^8.21.0"
+  },
+  "exports": {
+    ".": "./scripts/cli.mjs",
+    "./package.json": "./package.json",
+    "./build": {
+      "types": "./scripts/embed-build.d.mts",
+      "default": "./scripts/embed-build.mjs"
+    },
+    "./auth": {
+      "types": "./types/auth.d.ts",
+      "default": "./src/auth.ts"
+    },
+    "./http": {
+      "types": "./types/http.d.ts",
+      "default": "./src/http.ts"
+    },
+    "./instance": {
+      "types": "./types/instance.d.ts",
+      "default": "./src/instance.ts"
+    },
+    "./session-store": {
+      "types": "./types/session-store.d.ts",
+      "default": "./src/session-store.ts"
+    },
+    "./workspace": {
+      "types": "./types/workspace.d.ts",
+      "default": "./src/workspace.ts"
+    },
+    "./release": {
+      "types": "./src/release.ts",
+      "default": "./src/release.ts"
+    }
   }
 }

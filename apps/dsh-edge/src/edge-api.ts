@@ -59,6 +59,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { isUserInvocable } from '@deepseek-ai/dsh-skill'
 import { EDGE_SYSTEM_PROMPT } from './agent.ts'
+import { EdgeHttpError } from './http.ts'
 import type { EdgeDeploymentProfile } from './deployment.ts'
 import { EDGE_DO_ATTACHMENT_MAX_STORED_BYTES } from './edge-attachment-store.ts'
 import type { EdgeApiSessionSummary, EdgeSessionStore } from './session-store.ts'
@@ -1099,6 +1100,13 @@ function sessionFailure<T>(
   error: unknown,
   sessionId: SessionId | undefined,
 ): RpcResponse<T> {
+  if (error instanceof EdgeHttpError && error.status === 429) {
+    return fail(request, {
+      code: 'agent-busy',
+      message: error.message,
+      details: { reason: 'concurrency-limit' },
+    })
+  }
   if (error instanceof EdgeSessionStoreError) {
     if (error.code === 'NOT_FOUND' && sessionId !== undefined) {
       return fail(request, {

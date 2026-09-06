@@ -1,5 +1,10 @@
 .wrangler/
 .dev.vars*
 worker/
+dist/
+edge-client/
+vendor/
+*.tgz
 standalone/dist/
 standalone/edge-client/
+standalone/worker/

@@ -1,0 +1,15 @@
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -2921,12 +2921,6 @@
+ 					}
+ 				}
+ 			}, ModelsSection));
+-			ctx.slots.inject("settings.onboarding", () => ctx.slots.register({
+-				name: "settings.onboarding",
+-				id: "welcome-notice",
+-				order: -100,
+-				inject: welcomeInjected
+-			}, WelcomeNotice));
+ 			ctx.slots.inject("settings.onboarding", () => ctx.slots.register({
+ 				name: "settings.onboarding",
+ 				id: "deepseek-official",

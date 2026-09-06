@@ -55,7 +55,8 @@ export function apply(ctx: Context): void {
     mirror.load()
   }
   ctx.effect(() => ctx.locale.register('settings.edge', { en, zh }), 'ui-edge: settings dictionaries')
-  const controller = new EdgeSettingsController({
+  if (window.parent === window) {
+    const controller = new EdgeSettingsController({
     fetch: (input, init) => globalThis.fetch(input, init),
     copy: async (text) => {
       if (!await writeClipboard(text)) throw new Error('Clipboard write was rejected')
@@ -76,6 +77,7 @@ export function apply(ctx: Context): void {
     locale: 'settings.edge',
     inject: injected,
   }, EdgeSettingsSection))
+  }
   slots.inject('conversation.hero.workspace.directoryFlow', () =>
     slots.inject('sidebar.workspaces.directoryFlow', function* () {
       yield slots.register(

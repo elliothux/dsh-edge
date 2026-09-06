@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 
-const ignoredDirectories = new Set(['.git', 'dist', 'node_modules', 'worker'])
+const ignoredDirectories = new Set(['.git', 'dist', 'node_modules', 'worker', 'vendor', 'edge-client'])
 const manifestHeader = [
   '# Bilingual-pair consistency record: the git blob hash of each side at the',
   '# last confirmed-consistent state. Both languages carry equal authority.',

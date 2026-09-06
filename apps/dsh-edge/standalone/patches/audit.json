@@ -1,8 +1,13 @@
 [
   {
+    "package": "@deepseek-ai/dsh-client-ui-settings-models",
+    "rationale": "Remove the upstream Harness internal-testing welcome notice from the embedded LynxOS Agent. It describes a different product and blocks every Lynx user once per upstream copy version.",
+    "removeWhen": "The published Models UI exposes a product integration seam for disabling the Harness welcome notice, or no longer registers that notice in embedded builds."
+  },
+  {
     "package": "@deepseek-ai/dsh-api-session-controller",
-    "rationale": "Remove node:fs/promises mkdir/stat calls that are incompatible with Cloudflare Workers. The Edge Computer workspace guarantees /workspace exists, and the DO persistence backend exposes no file location for the cold-blank probe.",
-    "removeWhen": "The published session controller routes directory creation through the ctx.fs seam (or gates it behind a platform check) and the cold-blank probe no longer requires node:fs stat."
+    "rationale": "Remove node:fs/promises mkdir/stat calls that are incompatible with Cloudflare Workers. The Edge Computer workspace guarantees /workspace exists, and the DO persistence backend exposes no file location for the cold-blank probe. Reconcile a failed prompt HTTP response against its original request id in authoritative history or queue state, instead of restoring an already-submitted draft.",
+    "removeWhen": "The published session controller routes directory creation through the ctx.fs seam (or gates it behind a platform check) and the cold-blank probe no longer requires node:fs stat. The controller must also retain acceptance after a lost response; the original-request-id browser failure check must pass without this patch."
   },
   {
     "package": "@deepseek-ai/dsh-llm",
@@ -43,5 +48,15 @@
     "package": "@deepseek-ai/dsh-workspace",
     "rationale": "Replace node:fs/promises realpath with lexical path normalization and remove stat calls, both incompatible with Cloudflare Workers. Edge VFS has no symlinks, so lexical resolution of '.', '..', and duplicate separators is exactly realpath's canonical result and keeps caller-supplied traversal paths from persisting alias workspaces.",
     "removeWhen": "The published workspace registry accepts an injectable path normalizer or the realpath/stat calls are gated behind a platform check."
+  },
+  {
+    "package": "@deepseek-ai/dsh-llm-deepseek",
+    "rationale": "Allow the product plugin to inject the request-scoped Service Binding transport while retaining the published adapter request, parser, model and reasoning behavior.",
+    "removeWhen": "The published adapter exposes an equivalent fetch transport; the shared-provider integration passes with global fetch unavailable and the patch removed."
+  },
+  {
+    "package": "@deepseek-ai/dsh-client-ui-conversation",
+    "rationale": "Keep the composer inert during native workspace/session creation so a pending selection cannot send its draft to the previous session. Omit InputBar `.modes` when no access-mode control is mounted: an empty modes flex item still consumes `.tools` gap before left-slot controls, and slot outlets prevent `:empty` from matching.",
+    "removeWhen": "The published composer includes pending workspace selection in its inert state and does not mount an empty `.modes` flex item ahead of left-slot controls; the delayed-create browser check and empty-modes verify assertion must pass without this patch."
   }
 ]

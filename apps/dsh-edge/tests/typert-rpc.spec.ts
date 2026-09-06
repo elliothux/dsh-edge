@@ -1,4 +1,23 @@
 import { describe, expect, it } from 'vitest'
+import { workspaceSessionArgs } from '../src/edge-api-dispatch.ts'
+
+describe('native session workspace authority', () => {
+  it('defaults to Computer without depending on the host process cwd', () => {
+    expect(workspaceSessionArgs({ request: {} })).toEqual({ request: { cwd: '/workspace' } })
+  })
+
+  it('preserves an explicit workspace or valid directory', () => {
+    for (const request of [{ workspaceId: 'project' }, { cwd: '/workspace/project' }]) {
+      expect(workspaceSessionArgs({ request })).toEqual({ request })
+    }
+  })
+
+  it('rejects paths outside Computer before invoking the native controller', () => {
+    for (const cwd of ['/bundle', '/workspace/../bundle', 42]) {
+      expect(() => workspaceSessionArgs({ request: { cwd } })).toThrow()
+    }
+  })
+})
 
 const TYPERT_URL_PATTERN = /^\/api\/([a-zA-Z0-9_$.-]+)\/([a-zA-Z0-9_$.-]+)$/
 

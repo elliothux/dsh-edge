@@ -10,6 +10,7 @@ import {
 } from '@deepseek-ai/dsh-attachment'
 import { SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS } from '@deepseek-ai/dsh-api-session-controller/types'
 import { RpcId } from '../src/edge-rpc-types.ts'
+import { EdgeHttpError } from '../src/http.ts'
 import { createUserMessage, type MessageId } from '@deepseek-ai/dsh-llm'
 import { SessionId, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { describe, expect, it, vi } from 'vitest'
@@ -232,6 +233,25 @@ describe('Edge upstream API invariants', () => {
         credentials: {
           DEEPSEEK_API_KEY: { configured: false, writable: true },
         },
+      },
+    })
+  })
+
+  it('reports deployment concurrency admission as an actionable busy response', async () => {
+    const api = createEdgeApi(runtime({}, {
+      prompt: async () => { throw new EdgeHttpError(429, 'Concurrent conversation limit reached.') },
+    }))
+    const result = await api.sessions.prompt(request({
+      sessionId: parentId,
+      mode: 'queue',
+      content: [{ type: 'text', text: 'hello' }],
+    }))
+    expect(result.result).toEqual({
+      ok: false,
+      error: {
+        code: 'agent-busy',
+        message: 'Concurrent conversation limit reached.',
+        details: { reason: 'concurrency-limit' },
       },
     })
   })
