@@ -10,7 +10,7 @@
   "scripts": {
     "build": "pnpm run build:web && pnpm run build:workers",
     "build:edge-client": "tsdown --config tsdown.edge-client.config.mjs",
-    "build:web": "pnpm run build:edge-client && node scripts/assemble-standalone-web.mjs",
+    "build:web": "pnpm run build:edge-client && node ../scripts/stage-edge-client.mjs && node scripts/assemble-standalone-web.mjs",
     "build:worker:direct": "node scripts/bundle-standalone.mjs direct",
     "build:worker:isolated": "node scripts/bundle-standalone.mjs isolated",
     "build:workers": "pnpm run build:worker:direct && pnpm run build:worker:isolated",
