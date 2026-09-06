@@ -132,6 +132,29 @@ for (const name of excludedClientPackages) {
 for (const entry of boot.entries) {
   await access(join(webRoot, 'plugins', entry.id, 'client.js'))
 }
+const modelsSettingsBundle = await readFile(
+  join(webRoot, 'plugins', '@deepseek-ai', 'dsh-client-ui-settings-models', 'client.js'),
+  'utf8',
+)
+if (modelsSettingsBundle.includes('id: "welcome-notice"')) {
+  throw new Error('Embedded Edge Web still registers the upstream Harness welcome notice.')
+}
+const conversationBundle = await readFile(
+  join(webRoot, 'plugins', '@deepseek-ai', 'dsh-client-ui-conversation', 'client.js'),
+  'utf8',
+)
+if (!conversationBundle.includes('.uV2eYG_modes:empty{display:none}')) {
+  throw new Error('Conversation UI still leaves empty InputBar .modes in the composer tools gap.')
+}
+if (!conversationBundle.includes('accessSelect === null ? sessionId === void 0 ? null : renderSlot("conversation.input.plan"')) {
+  throw new Error('Conversation UI still mounts .modes when access-mode chrome is absent.')
+}
+if (!conversationBundle.includes('command === void 0 || permissions === void 0')) {
+  throw new Error('Conversation UI still mounts PermissionSelect without a permissions projection.')
+}
+if (!conversationBundle.includes('pendingWorkspaceId !== void 0 || sessionId === void 0')) {
+  throw new Error('Conversation UI omitted the pending-workspace composer inert guard.')
+}
 if (JSON.stringify(bootShape(boot)) !== JSON.stringify(expectedBootShape)) {
   throw new Error(`Standalone Web boot graph differs from the reviewed ${targetVersion} contract.`)
 }

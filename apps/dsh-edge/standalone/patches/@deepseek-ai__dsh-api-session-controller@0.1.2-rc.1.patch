@@ -31,3 +31,37 @@ index 9f8e63c093ebdf1505c79f3614280df794d77c04..83d028e9af4e593b48b14ba7cf2d0532
  		} catch {
  			signal?.throwIfAborted();
  			return;
+--- a/lib/types/client/sessions/session.js
++++ b/lib/types/client/sessions/session.js
+@@ -192,6 +192,14 @@
+             }, signal);
+             result = routed.ok ? { ok: true, value: { accepted: true } } : routed;
+         }
++        if (!result.ok && requestId !== undefined) {
++            // A lost admission response cannot undo a matching authoritative event or queue entry.
++            const accepted = () => this.eventSource.getSnapshot().entries.some(({ event }) =>
++                event.type === "user/message" && event.data?.source?.kind === "user" && event.data.source.rpcId === requestId)
++                || this.queueMirror.snapshot().some(item => item.rpcId === requestId);
++            if (!accepted()) await this.resync();
++            if (accepted()) result = { ok: true, value: { accepted: true } };
++        }
+         if (!result.ok) {
+             if (requestId !== undefined)
+                 this.retireFailedSubmission(requestId);
+--- a/lib/client.js
++++ b/lib/client.js
+@@ -931,6 +931,14 @@
+ 						ok: true,
+ 						value: { accepted: true }
+ 					} : routed;
++				}
++				if (!result.ok && requestId !== undefined) {
++				    // A lost admission response cannot undo a matching authoritative event or queue entry.
++				    const accepted = () => this.eventSource.getSnapshot().entries.some(({ event }) =>
++				        event.type === "user/message" && event.data?.source?.kind === "user" && event.data.source.rpcId === requestId)
++				        || this.queueMirror.snapshot().some(item => item.rpcId === requestId);
++				    if (!accepted()) await this.resync();
++				    if (accepted()) result = { ok: true, value: { accepted: true } };
+ 				}
+ 				if (!result.ok) {
+ 					if (requestId !== void 0) this.retireFailedSubmission(requestId);

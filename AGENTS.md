@@ -1,6 +1,6 @@
 # dsh-edge repository instructions
 
-`dsh-edge` is an independent community wrapper that runs published DeepSeek Harness packages on Cloudflare Workers. It is maintained by pawaca and is not affiliated with or endorsed by DeepSeek.
+`dsh-edge` is the open-compute fork of the community Cloudflare wrapper for published DeepSeek Harness packages. The publishable npm package is `@open-compute/dsh-edge`. Upstream sync source is `pawaca/dsh-edge`; this fork is not affiliated with or endorsed by DeepSeek.
 
 ## Ownership boundary
 
@@ -17,10 +17,10 @@ pnpm install
 pnpm --dir apps/dsh-edge/standalone install --frozen-lockfile
 pnpm run check
 pnpm run build
-pnpm --filter dsh-edge dev
-pnpm --filter dsh-edge dev:isolated
-pnpm --filter dsh-edge run test:integration
-pnpm --filter dsh-edge run test:snapshot
+pnpm --filter @open-compute/dsh-edge dev
+pnpm --filter @open-compute/dsh-edge dev:isolated
+pnpm --filter @open-compute/dsh-edge run test:integration
+pnpm --filter @open-compute/dsh-edge run test:snapshot
 ```
 
 The root and standalone lockfiles serve different purposes. The root lock installs repository tests and tooling; the standalone lock is the release assembly and must build successfully before the root install in CI so parent dependencies cannot mask missing release inputs.
@@ -35,7 +35,7 @@ The root and standalone lockfiles serve different purposes. The root lock instal
 - When registering a cordis sub-registry entry (e.g. `ctx.storage.backend.register(name, backend)`), call `ctx.provide(key, value)` if another plugin uses `ctx.inject([key])` to wait for it. Sub-registry `register()` methods only update internal Maps; they do not trigger cordis inject resolution. Use `ctx.effect()` to pair registration with `provide` and clean up on disposal.
 - Direct mode must stay below the repository gzip budget. Release tests must start the promoted prebuilt artifacts, not source entrypoints.
 - Every retained upstream patch needs a version-bound filename, a failing-without-the-patch check, a rationale, and a removal condition.
-- The npm package, tag, GitHub Release, deployment identity, and documentation must report the same dsh-edge version.
+- The npm package (`@open-compute/dsh-edge`), tag, GitHub Release, deployment identity, and documentation must report the same version.
 - `apps/dsh-edge/package.json` is the only release-version source. Test assertions and snapshot expectations derive the version and npm dist-tag channel at runtime; a version bump requires no other file changes. Private workspace manifests omit `version` so they cannot imply a second product or upstream release identity.
 
 ## Change discipline
@@ -61,7 +61,7 @@ Every version published to npm must also have a matching GitHub Release and git 
 3. **Pull main** and verify `apps/dsh-edge/package.json` version matches the intended release.
 4. **Create and push a git tag**: `git tag dsh-edge-v<version> && git push origin dsh-edge-v<version>`.
 5. The tag push triggers `release-edge.yml` which automatically builds, verifies, publishes to npm (trusted publishing), and creates the GitHub Release.
-6. **Verify**: `npm view dsh-edge@<version>` and `gh release view dsh-edge-v<version>` both resolve.
+6. **Verify**: `npm view @open-compute/dsh-edge@<version>` and `gh release view dsh-edge-v<version>` both resolve.
 
 The workflow can also be triggered manually via `request-release.yml` (workflow_dispatch) or `repository_dispatch` as a fallback. Prerelease versions (containing `-`) are published to the `next` npm dist-tag and marked as GitHub prerelease.
 

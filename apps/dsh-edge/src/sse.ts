@@ -80,7 +80,7 @@ export function createLiveSessionEventStream(
     },
   }, {
     highWaterMark: MAX_LIVE_STREAM_QUEUED_BYTES,
-    size: chunk => chunk.byteLength,
+    size: chunk => chunk?.byteLength ?? 0,
   })
   return { stream, completion }
 }

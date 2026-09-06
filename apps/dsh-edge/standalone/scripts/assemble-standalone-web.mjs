@@ -1,6 +1,7 @@
 /** Assemble Edge Web assets entirely from the pinned published upstream packages. */
 
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -8,32 +9,77 @@ import { fileURLToPath } from 'node:url'
 import { ClientModuleRegistry, bootInjections, orderByModuleGraph } from '@deepseek-ai/dsh-client-modules'
 import { renderIndexInjections } from '@deepseek-ai/dsh-host-webserver'
 
+const embedded = process.env.DSH_EDGE_WEB_EMBEDDED === '1'
 const standaloneRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const appRoot = resolve(standaloneRoot, '..')
 const repoRoot = resolve(appRoot, '../..')
+const vendorRoot = join(appRoot, 'vendor')
+const packageRequire = createRequire(join(appRoot, 'package.json'))
 const standaloneRequire = createRequire(join(standaloneRoot, 'package.json'))
-const basePackagePath = standaloneRequire.resolve('@deepseek-ai/dsh-base/package.json')
-const webAppPackagePath = standaloneRequire.resolve('@deepseek-ai/dsh-web-app/package.json')
-const shellPackagePath = standaloneRequire.resolve('@deepseek-ai/dsh-web-frontend/package.json')
+
+function packageName(specifier) {
+  if (!specifier.startsWith('@')) return specifier.split('/')[0]
+  return specifier.split('/').slice(0, 2).join('/')
+}
+
+function vendorPackageJson(name) {
+  return join(vendorRoot, ...name.split('/'), 'package.json')
+}
+
+/** Prefer prepack vendor (patched) over host node_modules for embed consumers. */
+function resolveFromAssembly(specifier) {
+  const name = packageName(specifier)
+  const vendored = vendorPackageJson(name)
+  if (existsSync(vendored)) {
+    return createRequire(vendored).resolve(specifier)
+  }
+  try {
+    return standaloneRequire.resolve(specifier)
+  } catch {
+    return packageRequire.resolve(specifier)
+  }
+}
+const basePackagePath = resolveFromAssembly('@deepseek-ai/dsh-base/package.json')
+const webAppPackagePath = resolveFromAssembly('@deepseek-ai/dsh-web-app/package.json')
+const shellPackagePath = resolveFromAssembly('@deepseek-ai/dsh-web-frontend/package.json')
 const packageResolvers = [
   standaloneRequire,
+  packageRequire,
   createRequire(basePackagePath),
   createRequire(webAppPackagePath),
 ]
 const shellDist = join(dirname(shellPackagePath), 'dist')
-const outputRoot = join(standaloneRoot, 'dist')
+const outputRoot = process.env.DSH_EDGE_WEB_OUT_DIR
+  ? resolve(process.env.DSH_EDGE_WEB_OUT_DIR)
+  : join(standaloneRoot, 'dist')
 const deploymentPatches = [
   join(dirname(basePackagePath), 'cordis.patch.yml'),
   join(dirname(webAppPackagePath), 'cordis.patch.yml'),
 ]
-const edgeClientPackagePath = join(repoRoot, 'packages/client/ui-edge/package.json')
-const edgeClientBundlePath = join(standaloneRoot, 'edge-client/client.js')
+const publishedEdgeClientDir = join(appRoot, 'edge-client')
+const edgeClientPackagePath = join(publishedEdgeClientDir, 'package.json')
+const edgeClientBundlePath = join(publishedEdgeClientDir, 'client.js')
+try {
+  await stat(edgeClientPackagePath)
+  await stat(edgeClientBundlePath)
+} catch {
+  throw new Error(
+    'Missing apps/dsh-edge/edge-client. Run the package build/stage-edge-client step before assembling Web assets.',
+  )
+}
 const edgeClientPackages = new Map([
   ['dsh-edge-client-ui', {
     packagePath: edgeClientPackagePath,
     bundlePath: edgeClientBundlePath,
   }],
 ])
+const additionalClientPackage = process.env.DSH_EDGE_WEB_CLIENT_PACKAGE
+if (additionalClientPackage) {
+  const packagePath = resolve(additionalClientPackage)
+  const pkg = JSON.parse(await readFile(packagePath, 'utf8'))
+  if (edgeClientPackages.has(pkg.name)) throw new Error(`Duplicate client package: ${pkg.name}`)
+  edgeClientPackages.set(pkg.name, { packagePath, bundlePath: undefined })
+}
 
 const edgeExcludedPackages = new Set([
   '@deepseek-ai/dsh-client-hmr',
@@ -44,9 +90,13 @@ const edgeExcludedPackages = new Set([
   '@deepseek-ai/dsh-client-ui-settings-plugin-inventory',
   '@deepseek-ai/dsh-client-ui-settings-plugins',
   '@deepseek-ai/dsh-session-log-export',
+  ...(process.env.DSH_EDGE_WEB_EXCLUDE_PACKAGES?.split(',').filter(Boolean) ?? []),
 ])
 const shellStaticPackages = new Set(['@deepseek-ai/dsh-client-ui-primitives'])
-const assetSecurityHeaders = `/*
+const assetSecurityHeaders = embedded ? `/*
+  Content-Security-Policy: frame-ancestors 'self'
+  X-Frame-Options: SAMEORIGIN
+` : `/*
   Content-Security-Policy: frame-ancestors 'none'
   X-Frame-Options: DENY
 `
@@ -92,6 +142,10 @@ function clientBundleRelativePath(pkg) {
 }
 
 function resolvePublishedPackage(name) {
+  const vendored = vendorPackageJson(name)
+  if (existsSync(vendored)) {
+    return { packagePath: vendored, bundlePath: undefined }
+  }
   for (const resolver of packageResolvers) {
     try {
       const packagePath = resolver.resolve(`${name}/package.json`)
@@ -225,7 +279,9 @@ async function main() {
   const indexPath = join(outputRoot, 'index.html')
   const index = await readFile(indexPath, 'utf8')
   const bootstrappedIndex = renderIndexInjections(index, bootInjections(graph))
-  await writeFile(indexPath, injectOwnerSessionGuard(bootstrappedIndex))
+  await writeFile(indexPath, embedded
+    ? bootstrappedIndex.replaceAll('="/', '="./').replaceAll('"url":"/', '"url":"./')
+    : injectOwnerSessionGuard(bootstrappedIndex))
   await writeFile(join(outputRoot, '_headers'), assetSecurityHeaders)
   console.log(
     `Assembled ${entries.length} published upstream client plugins in ${relative(repoRoot, outputRoot)} (rev ${graph.rev}).`,

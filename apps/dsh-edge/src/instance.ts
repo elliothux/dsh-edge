@@ -9,7 +9,8 @@ import {
   WorkerShellBackend,
   type WorkerShellLoader,
 } from '@cloudflare/computer/backends/worker-shell'
-import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import type { Context } from '@deepseek-ai/cordis'
+import type { Agent, AgentHandle, ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { SessionListMetadata, QueueAction } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/types'
@@ -21,7 +22,7 @@ import {
   type QueuedInboxItem,
   type ServerRequest,
 } from './edge-rpc-types.ts'
-import { callEdgeApi, dispatchEdgeApi } from './edge-api-dispatch.ts'
+import { callEdgeApi, dispatchEdgeApi, workspaceSessionArgs } from './edge-api-dispatch.ts'
 import { freezeMessage, type MessageId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
@@ -121,6 +122,7 @@ function workspaceEntityToView(entity: {
 interface DownlinkAttachment {
   channel: 'mux' | 'host' | 'remote.mux'
   expiresAt: number
+  authorizationKey?: string
 }
 
 /** Whether the Typert gateway reported that no active service exports the endpoint. */
@@ -166,8 +168,24 @@ function applySessionListMetadata(
     : { blank, lastPromptAt }
 }
 
+/** Product-owned integration hooks; never accepted from HTTP or stored settings. */
+export interface EdgeIntegration {
+  installPlugins(this: void, ctx: Context): Promise<void>
+  installAgentPlugins(this: void, ctx: Context): Promise<void>
+  systemPrompt: string
+  defaultSelection(this: void): ModelSelection | undefined
+  attachmentObjectKey(this: void, digest: string): string
+  authorization: {
+    current(): { key: string; expiresAt: number }
+    renew(key: string): Promise<number>
+    run<T>(key: string, expiresAt: number, operation: () => T): T
+    intervalMs: number
+  }
+}
+
 /** Bindings shared by the entry Worker and each workspace Durable Object. */
 export interface EdgeEnv {
+  integration?: EdgeIntegration
   DSH_EDGE_INSTANCE: DurableObjectNamespace<DshEdgeInstance>
   ASSETS: Fetcher
   LOADER?: WorkerShellLoader
@@ -211,6 +229,7 @@ const DshEdgeWorkspace = withWorkspace(
 )
 
 interface ActiveTurn {
+  authorizationKey?: string
   turnId: EdgeTurnId
   agent?: Agent
   cancelRequested: boolean
@@ -229,9 +248,16 @@ export class DshEdgeInstance extends DshEdgeWorkspace {
     this.ctx.storage,
     this.env.DSH_EDGE_ATTACHMENTS,
   )
-  private readonly sessions = new EdgeSessionStore(
+  protected readonly sessions = new EdgeSessionStore(
     this.ctx.storage,
     {
+      ...this.env.integration === undefined ? {} : {
+        installPlugins: this.env.integration.installPlugins,
+        installAgentPlugins: this.env.integration.installAgentPlugins,
+        systemPrompt: this.env.integration.systemPrompt,
+        defaultSelection: this.env.integration.defaultSelection,
+        attachmentObjectKey: this.env.integration.attachmentObjectKey,
+      },
       readDeepSeekApiKey: () => this.env.DEEPSEEK_API_KEY,
       attachmentStorage: this.attachmentStorage,
       ...this.env.DEEPSEEK_SEARCH_BASE_URL === undefined
@@ -275,6 +301,17 @@ export class DshEdgeInstance extends DshEdgeWorkspace {
   )
   private readonly model = resolveEdgeModel(this.env.DEEPSEEK_MODEL)
   private readonly activeTurns = new Map<SessionId, ActiveTurn>()
+  private draining = false
+
+  /** Stop this instance before its embedding application removes durable data. */
+  protected async drain(): Promise<void> {
+    this.draining = true
+    for (const socket of this.ctx.getWebSockets()) socket.close(1008, 'instance removed')
+    const turns = [...this.activeTurns.entries()]
+    for (const [sessionId] of turns) this.requestTurnCancellation(sessionId)
+    await Promise.all(turns.map(([, turn]) => turn.releaseComplete))
+    await this.sessions.dispose()
+  }
   private readonly sessionListMetadata = new Map<SessionId, SessionListMetadata>()
   private readonly pendingProjections = new Map<SessionId, { key: string; value: unknown; seq: number }[]>()
   private readonly api = createEdgeApi({
@@ -382,7 +419,15 @@ export class DshEdgeInstance extends DshEdgeWorkspace {
         socket.close(1003, 'text messages required')
         return
       }
-      this.handleRemoteMuxMessage(socket, message)
+      const integration = this.env.integration
+      if (integration !== undefined) {
+        if (attachment.authorizationKey === undefined) {
+          socket.close(1008, 'authorization required')
+          return
+        }
+        integration.authorization.run(attachment.authorizationKey, attachment.expiresAt * 1000,
+          () => this.handleRemoteMuxMessage(socket, message))
+      } else this.handleRemoteMuxMessage(socket, message)
       return
     }
     socket.close(1008, 'downlink only')
@@ -400,8 +445,43 @@ export class DshEdgeInstance extends DshEdgeWorkspace {
 
   /** End hibernating downlinks when the owner session used to open them expires. */
   override async alarm(): Promise<void> {
+    await this.renewAuthorizations()
     const nextExpiry = this.closeExpiredDownlinks()
-    if (nextExpiry !== undefined) await this.ctx.storage.setAlarm(nextExpiry)
+    if (nextExpiry !== undefined) await this.scheduleDownlinkExpiry(nextExpiry)
+    else if (this.activeTurns.size > 0 && this.env.integration !== undefined) await this.scheduleDownlinkExpiry(Date.now() + this.env.integration.authorization.intervalMs)
+  }
+
+  private authorizationAttachment(): { authorizationKey?: string } {
+    const authorization = this.env.integration?.authorization.current()
+    return authorization === undefined ? {} : { authorizationKey: authorization.key }
+  }
+
+  private async renewAuthorizations(): Promise<void> {
+    const integration = this.env.integration
+    if (integration === undefined) return
+    const keys = new Set<string>()
+    for (const turn of this.activeTurns.values()) if (turn.authorizationKey !== undefined) keys.add(turn.authorizationKey)
+    for (const socket of this.ctx.getWebSockets()) {
+      const key = readDownlinkAttachment(socket)?.authorizationKey
+      if (key !== undefined) keys.add(key)
+    }
+    await Promise.all([...keys].map(async (key) => {
+      let expiresAt = 0
+      try { expiresAt = await integration.authorization.renew(key) } catch { /* Authorization failure revokes this session. */ }
+      for (const socket of this.ctx.getWebSockets()) {
+        const attachment = readDownlinkAttachment(socket)
+        if (attachment?.authorizationKey !== key) continue
+        if (expiresAt <= Date.now()) {
+          this.abortRemoteStreams(socket)
+          socket.close(1008, 'authorization expired')
+        } else socket.serializeAttachment({ ...attachment, expiresAt: Math.floor(expiresAt / 1000) })
+      }
+      if (expiresAt <= Date.now()) {
+        for (const [sessionId, turn] of this.activeTurns) {
+          if (turn.authorizationKey === key) this.requestTurnCancellation(sessionId)
+        }
+      }
+    }))
   }
 
   private async openDownlink(request: Request, channel: 'mux' | 'host'): Promise<Response> {
@@ -414,7 +494,7 @@ export class DshEdgeInstance extends DshEdgeWorkspace {
       const pair = new WebSocketPair()
       const client = pair[0]
       const server = pair[1]
-      server.serializeAttachment({ channel, expiresAt } satisfies DownlinkAttachment)
+      server.serializeAttachment({ channel, expiresAt, ...this.authorizationAttachment() } satisfies DownlinkAttachment)
       this.ctx.acceptWebSocket(server, [channel])
       if (baseline !== undefined) {
         for (const session of baseline.sessions) {
@@ -446,7 +526,7 @@ export class DshEdgeInstance extends DshEdgeWorkspace {
     await this.scheduleDownlinkExpiry(expiresAt * 1_000)
     const pair = new WebSocketPair()
     const server = pair[1]
-    server.serializeAttachment({ channel: 'remote.mux', expiresAt } satisfies DownlinkAttachment)
+    server.serializeAttachment({ channel: 'remote.mux', expiresAt, ...this.authorizationAttachment() } satisfies DownlinkAttachment)
     this.ctx.acceptWebSocket(server, ['remote.mux'])
     remoteStreams.set(server, new Map())
     return new Response(null, { status: 101, webSocket: pair[0] })
@@ -702,7 +782,8 @@ export class DshEdgeInstance extends DshEdgeWorkspace {
     const gateway = this.sessions.typertGateway()
     if (gateway === undefined) return edgeDispatch()
     try {
-      const value = await gateway.invoke({ namespace: ns, method, args, signal: AbortSignal.timeout(30_000) })
+      const nativeArgs = ns === 'session' && method === 'create' ? workspaceSessionArgs(args) : args
+      const value = await gateway.invoke({ namespace: ns, method, args: nativeArgs, signal: AbortSignal.timeout(30_000) })
       return Response.json({ type: 'server-response', rpcId, result: { ok: true, value } })
     } catch (error) {
       // Only endpoints no registered controller serves fall back to the Edge
@@ -822,6 +903,7 @@ export class DshEdgeInstance extends DshEdgeWorkspace {
   }
 
   private async scheduleDownlinkExpiry(expiresAt: number): Promise<void> {
+    if (this.env.integration !== undefined) expiresAt = Math.min(expiresAt, Date.now() + this.env.integration.authorization.intervalMs)
     const scheduled = await this.ctx.storage.getAlarm()
     if (scheduled === null || expiresAt < scheduled) {
       await this.ctx.storage.setAlarm(expiresAt)
@@ -987,6 +1069,10 @@ export class DshEdgeInstance extends DshEdgeWorkspace {
     while (true) {
       const active = this.activeTurns.get(input.sessionId)
       if (active !== undefined) {
+        if (this.env.integration !== undefined
+          && active.authorizationKey !== this.env.integration.authorization.current().key) {
+          throw new EdgeSessionStoreError('BUSY', 'This conversation is running in another login session.')
+        }
         await active.admissionReady
         if (this.activeTurns.get(input.sessionId) === active
           && active.accepting
@@ -1069,11 +1155,13 @@ export class DshEdgeInstance extends DshEdgeWorkspace {
     handle: AgentHandle
   }> {
     const summary = await this.sessions.getApiSessionSummary(sessionId)
+    if (this.draining) throw new EdgeSessionStoreError('NOT_FOUND', 'This instance was removed.')
     if (this.activeTurns.has(sessionId)) {
       throw new EdgeSessionStoreError('BUSY', 'The session already has a running turn.')
     }
     this.rememberSessionListMetadata(summary)
     const turn: ActiveTurn = {
+      ...this.env.integration === undefined ? {} : { authorizationKey: this.env.integration.authorization.current().key },
       turnId: EdgeTurnId(crypto.randomUUID()),
       cancelRequested: false,
       accepting: false,
@@ -1082,6 +1170,7 @@ export class DshEdgeInstance extends DshEdgeWorkspace {
     }
     // Claim before opening the Agent so interleaved DO requests cannot own the same session.
     this.activeTurns.set(sessionId, turn)
+    if (this.env.integration !== undefined) await this.scheduleDownlinkExpiry(Date.now() + this.env.integration.authorization.intervalMs)
     try {
       const handle = await this.sessions.openAgentForTurn(sessionId, this.model)
       turn.agent = handle.agent
@@ -1273,13 +1362,13 @@ function readDownlinkAttachment(socket: WebSocket): DownlinkAttachment | undefin
   try {
     const attachment: unknown = socket.deserializeAttachment()
     if (typeof attachment !== 'object' || attachment === null) return undefined
-    const { channel, expiresAt } = attachment as Record<string, unknown>
+    const { channel, expiresAt, authorizationKey } = attachment as Record<string, unknown>
     if ((channel !== 'mux' && channel !== 'host' && channel !== 'remote.mux')
       || typeof expiresAt !== 'number'
       || !Number.isSafeInteger(expiresAt)) {
       return undefined
     }
-    return { channel, expiresAt }
+    return { channel, expiresAt, ...(typeof authorizationKey === 'string' ? { authorizationKey } : {}) }
   } catch {
     return undefined
   }

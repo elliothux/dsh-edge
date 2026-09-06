@@ -50,6 +50,7 @@ interface ImageMetadata {
 export interface EdgeR2AttachmentStoreConfig {
   bucket: R2Bucket
   images?: ImagesBinding
+  objectKey?: (digest: string) => string
 }
 
 interface AttachmentDigest {
@@ -202,10 +203,12 @@ export class EdgeR2AttachmentStore extends EdgeImageAttachmentStore {
   readonly imageLimits = EDGE_R2_IMAGE_LIMITS
 
   private readonly bucket: R2Bucket
+  private readonly objectKey: (digest: string) => string
 
   constructor(ctx: Context, config: EdgeR2AttachmentStoreConfig) {
     super(ctx)
     this.bucket = config.bucket
+    this.objectKey = config.objectKey ?? objectKey
     if (config.images !== undefined) this.images = config.images
   }
 
@@ -214,7 +217,7 @@ export class EdgeR2AttachmentStore extends EdgeImageAttachmentStore {
     data: Uint8Array,
     metadata: ImageMetadata,
   ): Promise<void> {
-    await this.bucket.put(objectKey(digest.hex), data, {
+    await this.bucket.put(this.objectKey(digest.hex), data, {
       httpMetadata: { contentType: metadata.mediaType },
       customMetadata: { sha256: digest.hex },
       sha256: digest.bytes,
@@ -226,7 +229,7 @@ export class EdgeR2AttachmentStore extends EdgeImageAttachmentStore {
     signal?: AbortSignal,
   ): Promise<Uint8Array | undefined> {
     signal?.throwIfAborted()
-    const object = await this.bucket.get(objectKey(digest))
+    const object = await this.bucket.get(this.objectKey(digest))
     if (object === null) return undefined
     return await object.bytes()
   }

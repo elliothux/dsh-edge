@@ -7,6 +7,17 @@
 
 import { RpcId, type RpcError } from './edge-rpc-types.ts'
 import type { EdgeApi } from './edge-api.ts'
+import { requireWorkspacePath } from './workspace.ts'
+
+/** Keep native session creation inside the Edge Computer workspace. */
+export function workspaceSessionArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const request = args.request
+  if (typeof request !== 'object' || request === null || Array.isArray(request)) return args
+  const selection = { ...request } as Record<string, unknown>
+  if (selection.cwd !== undefined) requireWorkspacePath(selection.cwd)
+  if (selection.cwd === undefined && selection.workspaceId === undefined) selection.cwd = '/workspace'
+  return { ...args, request: selection }
+}
 
 type Handler = (request: never, signal: AbortSignal) => Promise<{ rpcId: unknown; result: unknown }>
 

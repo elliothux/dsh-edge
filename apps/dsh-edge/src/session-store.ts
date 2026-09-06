@@ -13,6 +13,7 @@ import AgentRegistry, {
   type ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
+import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {
   AttachmentStore,
   ImageAttachmentLimits,
@@ -102,7 +103,12 @@ const MAX_TITLE_BYTES = 640
 const MAX_MESSAGE_FEEDBACK_NOTE_BYTES = 8_192
 const MAX_FORK_EVENTS = 8_192
 
-interface EdgeSessionStoreConfig {
+export interface EdgeSessionStoreConfig {
+  installPlugins?: (ctx: Context) => Promise<void>
+  installAgentPlugins?: (ctx: Context) => Promise<void>
+  systemPrompt?: string
+  defaultSelection?: () => ModelSelection | undefined
+  attachmentObjectKey?: (digest: string) => string
   readDeepSeekApiKey(): string | undefined
   searchBaseURL?: string
   attachmentStorage: EdgeAttachmentStorage
@@ -214,6 +220,13 @@ export class EdgeSessionStore {
   private readonly turnPublishedAgents = new WeakSet<Agent>()
   private readonly ready: Promise<void>
 
+  async dispose(): Promise<void> {
+    await this.ready
+    await Promise.all([...this.blankHandles.values()].map(handle => handle.dispose()))
+    this.blankHandles.clear()
+    await this.context.fiber.dispose()
+  }
+
   constructor(
     storage: DurableObjectStorage,
     config: EdgeSessionStoreConfig,
@@ -231,6 +244,7 @@ export class EdgeSessionStore {
       ? this.context.plugin(EdgeDoAttachmentStore, { storage, ...(images !== undefined ? { images } : {}) })
       : this.context.plugin(EdgeR2AttachmentStore, {
           bucket: requireAttachmentBucket(config.attachmentBucket),
+          ...(config.attachmentObjectKey === undefined ? {} : { objectKey: config.attachmentObjectKey }),
           ...(images !== undefined ? { images } : {}),
         }))
     await this.context.plugin(EdgeCredentialProvider, {
@@ -261,6 +275,7 @@ export class EdgeSessionStore {
     } catch (error) {
       console.error('dsh-edge: LLM provider plugin failed to initialize; model operations will be unavailable.', error)
     }
+    await config.installPlugins?.(this.context)
     await this.context.plugin(SessionStore)
     await this.context.plugin(SessionProjectionRegistry)
     await this.context.plugin(SessionProjectionCache, {
@@ -281,15 +296,11 @@ export class EdgeSessionStore {
       maxInputBytes: 4096,
       maxOutputTokens: 32,
       timeoutMs: 10_000,
-      provider: EDGE_PROVIDER,
-      model: DEFAULT_EDGE_MODEL,
     })
-    await this.context.plugin(SystemPrompt, { persona: EDGE_SYSTEM_PROMPT })
+    await this.context.plugin(SystemPrompt, { persona: config.systemPrompt ?? EDGE_SYSTEM_PROMPT })
     await this.context.plugin(EdgeVfsSpillStore)
     await this.context.plugin(EdgeFileSystem)
     await this.context.plugin(ToolRuntime)
-    await this.context.plugin(SkillRegistry)
-    await this.context.plugin(EdgeSkillProvider, { storage })
     await this.context.plugin(TypertRegistry)
     const { TypertGatewayService } = await import('@deepseek-ai/dsh-api-gateway')
     await this.context.plugin(TypertGatewayService)
@@ -332,15 +343,12 @@ export class EdgeSessionStore {
     // All 9 SessionController inject deps now available: agentDefaultModel,
     // agents, attachments, llm, sessions, sessionProjections, sessionQuery,
     // typert, workspaceRegistry. Controllers activate synchronously.
-    const defaultSelection: ModelSelection = {
-      provider: EDGE_PROVIDER,
-      model: resolveEdgeModel(config.model),
-    }
+    const defaultSelection = () => config.defaultSelection?.() ?? { provider: EDGE_PROVIDER, model: resolveEdgeModel(config.model) }
     const persistedSelection = await storage.get<ModelSelection>(AGENT_DEFAULT_MODEL_KEY)
     const EdgeAgentDefaultModel = class extends CordisService {
-      private selection = persistedSelection ?? defaultSelection
+      private selection = persistedSelection
       constructor(ctx: Context) { super(ctx, 'agentDefaultModel') }
-      currentSelection(): ModelSelection { return { ...this.selection } }
+      currentSelection(): ModelSelection { return { ...(this.selection ?? defaultSelection()) } }
       async saveSelection(selection: ModelSelection): Promise<void> {
         this.selection = { ...selection }
         await storage.put(AGENT_DEFAULT_MODEL_KEY, this.selection)
@@ -407,16 +415,22 @@ export class EdgeSessionStore {
     const { WorkspaceController } = await import('@deepseek-ai/dsh-api-workspace-controller')
     await this.context.plugin(WorkspaceController)
     this.registerRemoteEventSource()
-    await this.context.plugin(ToolFs)
-    await this.context.plugin(ToolSkill)
-    await this.context.plugin(GoalService)
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const { TYPERT: GOAL_TYPERT } = await import('@deepseek-ai/dsh-goal/typert' as string)
-    this.context.typert.register(GOAL_TYPERT as never)
-    await this.context.plugin(ToolGoal)
-    await this.context.plugin(GoalRoundDriver)
+    if (config.installAgentPlugins !== undefined) {
+      await config.installAgentPlugins(this.context)
+    } else {
+      await this.context.plugin(SkillRegistry)
+      await this.context.plugin(EdgeSkillProvider, { storage })
+      await this.context.plugin(ToolFs)
+      await this.context.plugin(ToolSkill)
+      await this.context.plugin(GoalService)
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const { TYPERT: GOAL_TYPERT } = await import('@deepseek-ai/dsh-goal/typert' as string)
+      this.context.typert.register(GOAL_TYPERT as never)
+      await this.context.plugin(ToolGoal)
+      await this.context.plugin(GoalRoundDriver)
+      await installEdgeWebSearch(this.context, config.searchBaseURL)
+    }
     await this.context.plugin(SpillPolicy, { maxInlineBytes: 32_768 })
-    await installEdgeWebSearch(this.context, config.searchBaseURL)
     await this.context.plugin(AgentLoop, { agents: [] })
     this.context.effect(
       () => this.context.tools.register(createEdgeBashTool(this.shells)),
@@ -748,11 +762,16 @@ export class EdgeSessionStore {
     const pending = await this.loadModelSelection(id)
     if (pending !== undefined) return pending
     const live = sessions.get(id)
-    if (live !== undefined) return loggedModelSelection(live.requestHeader()?.config, defaultModel)
+    if (live !== undefined) {
+      const header = live.requestHeader()
+      return header === undefined
+        ? this.context.agentDefaultModel.currentSelection()
+        : loggedModelSelection(header.config, defaultModel)
+    }
     if (!(persistence instanceof DurableObjectSessionPersistence)) {
       throw new EdgeSessionStoreError('INVALID_DATA', 'Edge persistence backend is unavailable.')
     }
-    if (persistence.readBlankSession(id) !== undefined) return defaultModelSelection(defaultModel)
+    if (persistence.readBlankSession(id) !== undefined) return this.context.agentDefaultModel.currentSelection()
     if (persistence.readSessionHeader(id) === undefined) {
       throw new EdgeSessionStoreError('NOT_FOUND', 'Session not found.')
     }
@@ -1284,10 +1303,12 @@ export class EdgeSessionStore {
     }
     let assembled: ModelSelection | undefined
     const selections = this.modelSelections
+    const defaults = this.context.agentDefaultModel
     const selection: ModelSelectionRef = {
       get current() {
+        const header = agent.session.requestHeader()
         return selections.current(agent.id)
-          ?? loggedModelSelection(agent.session.requestHeader()?.config, defaultModel)
+          ?? (header === undefined ? defaults.currentSelection() : loggedModelSelection(header.config, defaultModel))
       },
       set current(next) {
         selections.setCurrent(agent.id, next)
@@ -1311,23 +1332,11 @@ export class EdgeSessionStore {
   private agentPendingSelection(id: SessionId): ModelSelection | undefined {
     const agent = this.context.agents.get(id)
     if (agent === undefined) return undefined
-    try {
-      const state = this.context.sessionProjections.stateOf(agent.session, 'modelSelection') as {
-        pending?: { provider?: unknown; model?: unknown; reasoningEffort?: unknown } | null
-      } | undefined
-      const pending = state?.pending
-      if (pending == null
-        || typeof pending.provider !== 'string'
-        || typeof pending.model !== 'string') return undefined
-      const selection: ModelSelection = { provider: pending.provider, model: pending.model }
-      return typeof pending.reasoningEffort === 'string'
-        ? {
-          ...selection,
-          reasoningEffort: pending.reasoningEffort as NonNullable<ModelSelection['reasoningEffort']>,
-        }
-        : selection
-    } catch {
-      return undefined
+    const pending = this.context.sessionProjections.stateOf(agent.session, 'modelSelection')?.pending
+    if (pending == null) return undefined
+    return {
+      provider: pending.provider, model: pending.model,
+      ...pending.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(pending.reasoningEffort) },
     }
   }
 

@@ -187,6 +187,8 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-workspace@0.1.2-rc.1'
 
 patchedDependencies:
+  '@deepseek-ai/dsh-client-ui-settings-models@0.1.2-rc.1': patches/@deepseek-ai__dsh-client-ui-settings-models@0.1.2-rc.1.patch
+  '@deepseek-ai/dsh-client-ui-conversation@0.1.2-rc.1': patches/@deepseek-ai__dsh-client-ui-conversation@0.1.2-rc.1.patch
   '@deepseek-ai/dsh-api-gateway@0.1.2-rc.1': patches/@deepseek-ai__dsh-api-gateway@0.1.2-rc.1.patch
   '@deepseek-ai/dsh-api-session-controller@0.1.2-rc.1': patches/@deepseek-ai__dsh-api-session-controller@0.1.2-rc.1.patch
   '@deepseek-ai/dsh-llm@0.1.2-rc.1': patches/@deepseek-ai__dsh-llm@0.1.2-rc.1.patch
@@ -196,3 +198,4 @@ patchedDependencies:
   '@deepseek-ai/dsh-web-fetch-http@0.1.2-rc.1': patches/@deepseek-ai__dsh-web-fetch-http@0.1.2-rc.1.patch
   '@deepseek-ai/dsh-web-search-deepseek@0.1.2-rc.1': patches/@deepseek-ai__dsh-web-search-deepseek@0.1.2-rc.1.patch
   '@deepseek-ai/dsh-workspace@0.1.2-rc.1': patches/@deepseek-ai__dsh-workspace@0.1.2-rc.1.patch
+  '@deepseek-ai/dsh-llm-deepseek@0.1.2-rc.1': patches/@deepseek-ai__dsh-llm-deepseek@0.1.2-rc.1.patch

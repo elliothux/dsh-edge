@@ -356,4 +356,9 @@ pnpm --filter dsh-edge example:install
 - 冷浏览器 history 在 SQL 中选择消息边界，并仅在固定事件数与存储字节上限内加载所得连续区间。
 - Session listing 查询一个有界 canonical header/title summary page。Detail 读取 canonical point summary 或 retained blank header；turn existence check 使用 point query，不投影完整 log。
 - 实际 model、system prompt、adapter defaults 和 tools 仍使用标准 `request/header` 事件。Request-scoped adapter 应用已校验的部署级 reasoning 与输出策略。
-- Workspace 路径必须位于 `/workspace/` 下。
+- Workspace 路径必须位于 `/workspace/` 下。原生会话创建未选择 Workspace 或 cwd 时默认使用 `/workspace`；gateway 在调用原生 controller 前验证显式 cwd。
+- 固定版本的 Conversation UI 补丁在工作区选择创建会话期间禁用输入框。该过渡沿用原生待定选择状态，响应缓慢时不会把草稿发到上一个会话。同一补丁在访问模式 chrome 缺失时不挂载 InputBar `.modes`，避免空 flex 项在左侧 slot 前加倍间距。
+
+- 产品集成在接收消息前限制每 owner 的并发会话数。授权按登录 key 并行复核，单个登录失效只取消自身的任务与下行连接。
+- 固定版本的 Session Controller 补丁在 prompt 响应失败时，用原始请求 ID 核对权威事件窗口或队列；必要时重新同步历史，不重新发送 prompt。固定的上游 controller 具备同等回执核对后删除该补丁；丢失响应的浏览器检查必须在无补丁时失败。
+- 固定的上游输入框能在原生工作区／会话创建期间禁止发送，并像其他空 chrome 一样收起空的 `.modes` 后，删除 Conversation UI 补丁；延迟创建的浏览器检查与 empty-modes 校验在无补丁时必须失败。

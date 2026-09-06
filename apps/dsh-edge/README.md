@@ -356,4 +356,9 @@ pnpm --filter dsh-edge example:install
 - Cold browser history selects its message boundary in SQL and loads only the resulting contiguous range under fixed event and stored-byte ceilings.
 - Session listing queries one bounded canonical header/title summary page. Detail reads a canonical point summary or retained blank header; turn existence checks use point queries instead of projecting a complete log.
 - Effective model, system prompt, adapter defaults, and tools remain standard `request/header` events. The request-scoped adapter applies validated deployment reasoning and output policies.
-- Workspace paths must stay below `/workspace/`.
+- Workspace paths must stay below `/workspace/`. Native session creation defaults to `/workspace` when neither a Workspace nor a cwd is selected; the gateway validates explicit cwd before invoking the native controller.
+- The pinned Conversation UI patch disables the composer while a Workspace selection is creating its session. The existing native pending-selection state owns this transition, so a slow response cannot send the draft to the previous session. The same patch omits InputBar `.modes` when access-mode chrome is absent so an empty flex item cannot double the gap before left-slot controls.
+
+- Product integrations set a per-owner concurrent-turn limit before admission. Authorization keys renew in parallel; a failed login only cancels its own turns and downlinks.
+- The version-bound Session Controller patch reconciles a failed prompt response against the original request id in the authoritative event window or queue; it resynchronizes history when necessary and never resends the prompt. Remove this patch when the pinned upstream controller owns equivalent receipt reconciliation. The lost-response browser check must fail without it.
+- Remove the Conversation UI patch when the pinned upstream composer becomes inert during native workspace/session creation and collapses empty `.modes`; the delayed-create browser check and empty-modes verify assertion must fail without it.

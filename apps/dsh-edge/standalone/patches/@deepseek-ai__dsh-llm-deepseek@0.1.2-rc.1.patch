@@ -1,0 +1,22 @@
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -1752,7 +1752,7 @@
+ 			});
+ 			let response;
+ 			try {
+-				response = await fetch(`${connection.baseURL}/chat/completions`, {
++				response = await (this.config.fetch ?? fetch)(`${connection.baseURL}/chat/completions`, {
+ 					method: "POST",
+ 					headers,
+ 					body: payload,
+--- a/lib/types/adapter.d.ts
++++ b/lib/types/adapter.d.ts
+@@ -83,6 +83,8 @@
+ }
+ /** Constructor options for {@link DeepSeekAdapter}: the operation-local resolution hooks the plugin owns. */
+ export interface DeepSeekAdapterOptions {
++    /** Request-scoped transport for service-bound deployments. */
++    fetch?: (input: string | Request | URL, init?: RequestInit) => Promise<Response>;
+     /** Current validated connection facts; called once per operation. */
+     options: () => DeepSeekConnectionOptions;
+     /**
